@@ -50,13 +50,12 @@ if __name__=="__main__":
     # root path
     root_path = os.getcwd()
     # datasets's dir
-    data_dir = root_path + "/Github/AF-LSTM/Datasets/raw_data"
+    data_dir = root_path + "/Datasets/raw_data/ABSA-SemEval2014"
     raw_data = ConverData(data_dir)
     train,test = raw_data.conver()
-
-
-
-
+    # count data
+    print("train:",len(train))
+    print("test:",len(test))
 
 
 
