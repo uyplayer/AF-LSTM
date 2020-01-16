@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="ddb9cebc-3014-4745-941d-52b57c90bcaf" name="AF_LSTM" url="http://192.168.1.18">
+        <fileTransfer host="192.168.1.18" port="22" rootFolder="/home/uyplayer/Github/AF_LSTM" accessType="SFTP">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" passiveMode="true" shareSSLContext="true" />
+          </advancedOptions>
+          <option name="port" value="22" />
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>

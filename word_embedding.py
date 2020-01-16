@@ -97,7 +97,6 @@ class embedding(object):
                 test_y.append([0, 1, 0])
             elif i['polarity']==0:
                 test_y.append([0, 0, 1])
-
             test_aps_id.append(word_dict.get(i['term'], 0))
             ids = []
             for t in i['tokens']:

@@ -10,6 +10,7 @@ Implementation model in paper
 
 import os
 import sys
+import argparse
 
 Dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(Dir)
@@ -19,159 +20,148 @@ import word_embedding
 import data_convert
 from numpy.fft import fft, ifft
 
+from __future__ import print_function
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from utils import get_batch_data
+from word_embedding import embedding
+from data_convert import ConverData
 import torch.optim as optim
 
 torch.manual_seed(1)
 
+# AF_LSTM
+class AF_LSTM(nn.Module):
 
-# LSTM
-class LSTM_Layer(nn.Module):
-
-    def __int__(self, input, input_size, hidden_size, batch_size, embedding_dim, word_embedding, num_layers=1,
-                bias=True):
-        super(LSTM_Layer, self).__init__()
-        self.hidden_dim = hidden_size
-        self.input_size = input_size
+    def __int__(self, input_dim, hidden_size, batch_size, embedding_dim, word_embedding, num_layers=1, is_shuffle = True,bias=True):
+        print("Model : AF_LSTM is ready to run")
+        super(AF_LSTM, self).__init__()
+        self.hidden_size = hidden_size
         self.batch_size = batch_size
-        self.input_dim = embedding_dim
-        self.bias = bias
-        self.num_layers = num_layers
-        self.input = input
+        self.embedding_dim = embedding_dim
         self.word_embedding = word_embedding
-        self.embedding = nn.Embedding(self.word_embedding, self.input)
-        self.lstm = nn.LSTM(embedding_dim, hidden_size, self.num_layers)
+        self.num_layers = num_layers
+        self.n_iter = n_iter
+        self.bias = bias
+        self.is_shuffle = is_shuffle
+        self.n_iter = n_iter
+        self.input_dim = input_dim
 
-    def forward(self):
-        lstm_out, _ = self.lstm(self.embedding)
+        # model
+        #  attention trainable params
+        self.w_y = nn.Parameter(torch.randn([self.embedding_dim, self.embedding_dim]))
+        self.w_t = nn.Parameter(torch.randn([self.embedding_dim, self.embedding_dim]))
+        self.w_p = nn.Parameter(torch.randn([self.embedding_dim, self.embedding_dim]))
+        self.w_x = nn.Parameter(torch.randn([self.embedding_dim, self.embedding_dim]))
+        self.w_f = nn.Parameter(torch.randn([self.embedding_dim, self.embedding_dim]))
+        self.b_f = nn.Parameter(torch.randn(self.embedding_dim))
+        self.tanh = nn.Tanh()
+        self.softmax = nn.Softmax(dim=self.embedding_dim)
+        self.tanh_r = nn.Tanh()
+        self.last_Softmax = nn.Softmax(dim=self.embedding_dim)
+
+     # LSTM
+    def __lstm(self,input):
+        input_embedding = nn.Embedding(self.word_embedding, input)
+        self.lstm = nn.LSTM(self.embedding_dim, self.hidden_size, self.num_layers)
+        lstm_out, _ = self.lstm(input_embedding)
         return lstm_out
 
-
-# Aspect_Normalization
-class A_N(object):
-
-    def __int__(self, aspect_input, word_embedding, input_dim):
-        self.aspect_input = aspect_input
-        self.word_embedding = word_embedding
-        self.bn = nn.BatchNorm1d(num_features=input_dim)
-
-    def embed(self):
-        embedding = nn.Embedding(self.word_embedding, self.aspect_input)
-        output = self.bn(embedding)
+    # aspect_normilization
+    def __aspnor(self,input):
+        self.bn = nn.BatchNorm1d(num_features=self.input_dim)
+        input_embedding = nn.Embedding(self.word_embedding, input)
+        output = self.bn(input_embedding)
         normal_aspect = torch.sum(output, 1)
         return normal_aspect
 
-
-# Hidenstate_Normalization
-class H_N(object):
-
-    def __int__(self, input_h, input_dim):
-        self.input_h = input_h
-        self.bn = nn.BatchNorm1d(num_features=input_dim)
-
-    def embed(self):
-        output = self.bn(self.input_h)
+    # Hidenstate_Normalization
+    def __hidennor(self,input):
+        bn = nn.BatchNorm1d(num_features=self.input_dim)
+        output = bn(input)
         return output
 
-
-# calculate  associative memory ；circular correlation
-class M(object):
-
-    def __int__(self, h, s):
-        self.h = h
-        self.s = s
-
-    # calculate circular correlation
-    def correlation(self):
+    # calculate  associative memory ；circular correlation
+    def __correlation(self, h, s):
         return ifft(fft(self.h) * fft(self.s).conj()).real
 
-# attention
-class Attention(nn.Module):
+    def forward(self,x,s):
+        h_lstm_out = self.__lstm(x)
+        s__norm = self.__aspnor(s)
+        m = self.__correlation(h_lstm_out, s__norm)
+        # # attention
+        Y = self.tanh(torch.matmul(self.w_y, m))
+        a = self.softmax(torch.matmul(self.w_t, Y))
+        r = torch.matmul(h_lstm_out, a.transpose())
+        r = self.tanh_r(torch.matmul(self.w_p, r) + torch.matmul(self.w_x, h_lstm_out))
+        x_r = torch.matmul(self.w_f, r) + self.b_f
+        y = self.last_Softmax(x_r)
+        return y
 
-    '''
-    Args:
-        dimensions (int): Dimensionality of the query and context.
-        attention_type (str, optional): How to compute the attention score:
+# train
+def train(input_train_x, input_train_y,input_dim, input_aspect, hidden_size, batch_size, embedding_dim, word_embedding, num_layers, is_shuffle = True,bias=True):
+    print("Ready to train")
+    # AF_LSTM
+    af_lstm = AF_LSTM(input_dim, hidden_size, batch_size, embedding_dim, word_embedding, num_layers, is_shuffle = True,bias=True)
 
-            * dot: :math:`score(H_j,q) = H_j^T q`
-            * general: :math:`score(H_j, q) = H_j^T W_a q`
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.SGD(af_lstm.parameters(), lr=0.001, momentum=0.9)
+    running_loss = 0.0
+    for i in range(n_iter):
+        for x, y, s in get_batch_data(input_train_x, input_train_y,input_aspect,batch_size,
+                                      n_iter=n_iter, is_shuffle=is_shuffle):
 
-    Example:
+            # zero the parameter gradients
+            optimizer.zero_grad()
 
-         >>> attention = Attention(256)
-         >>> query = torch.randn(5, 1, 256)
-         >>> context = torch.randn(5, 5, 256)
-         >>> output, weights = attention(query, context)
-         >>> output.size()
-         torch.Size([5, 1, 256])
-         >>> weights.size()
-         torch.Size([5, 1, 5])
-    '''
+            # forward + backward + optimize
+            outputs = af_lstm(x,s)
+            loss = criterion(outputs, y)
+            loss.backward()
+            optimizer.step()
 
-    def __int__(self,dimensions, attention_type='general'):
-        super(Attention, self).__init__()
-        if attention_type not in ['dot', 'general']:
-            raise ValueError('Invalid attention type selected.')
-        self.attention_type = attention_type
-
-        if self.attention_type == 'general':
-            self.linear_in = nn.Linear(dimensions,dimensions,bias=False)
-
-        self.linear_out = nn.Linear(dimensions*2, dimensions,bias=False)
-        self.softmax = nn.Softmax(dim=1)
-        self.tanh = nn.Tanh()
-
-    def forward(self, query, context):
-        """
-               Args:
-                   query (:class:`torch.FloatTensor` [batch size, output length, dimensions]): Sequence of
-                       queries to query the context.
-                   context (:class:`torch.FloatTensor` [batch size, query length, dimensions]): Data
-                       overwhich to apply the attention mechanism.
-
-               Returns:
-                   :class:`tuple` with `output` and `weights`:
-                   * **output** (:class:`torch.LongTensor` [batch size, output length, dimensions]):
-                     Tensor containing the attended features.
-                   * **weights** (:class:`torch.FloatTensor` [batch size, output length, query length]):
-                     Tensor containing attention weights.
-        """
-        batch_size, output_len, dimensions = query.size()
-        query_len = context.size(1)
-        if self.attention_type == "general":
-            query = query.reshape(batch_size * output_len, dimensions)
-            query = self.linear_in(query)
-            query = query.reshape(batch_size, output_len, dimensions)
-
-            # TODO: Include mask on PADDING_INDEX?
-
-            # (batch_size, output_len, dimensions) * (batch_size, query_len, dimensions) ->
-            # (batch_size, output_len, query_len)
-        attention_scores = torch.bmm(query, context.transpose(1, 2).contiguous())
-
-        # Compute weights across every context sequence
-        attention_scores = attention_scores.view(batch_size * output_len, query_len)
-        attention_weights = self.softmax(attention_scores)
-        attention_weights = attention_weights.view(batch_size, output_len, query_len)
-
-        # (batch_size, output_len, query_len) * (batch_size, query_len, dimensions) ->
-        # (batch_size, output_len, dimensions)
-        mix = torch.bmm(attention_weights, context)
-
-        # concat -> (batch_size * output_len, 2*dimensions)
-        combined = torch.cat((mix, query), dim=2)
-        combined = combined.view(batch_size * output_len, 2 * dimensions)
-
-        # Apply linear_out on every 2nd dimension of concat
-        # output -> (batch_size, output_len, dimensions)
-        output = self.linear_out(combined).view(batch_size, output_len, dimensions)
-        output = self.tanh(output)
-
-        return output, attention_weights
+            # print statistics
+            running_loss += loss.item()
+            if i % 50 == 0:
+                print('[%d, %5d] loss: %.3f' %(i + 1, i + 1, running_loss / 50))
+                running_loss = 0.0
 
 
+print("============================train===========================")
 
-if __name__ == "__main__":
-    pass
+# Hyper Parameters
+parser = argparse.ArgumentParser()
+parser.add_argument('--data_dir', default=os.getcwd() + "/Datasets/raw_data/ABSA-SemEval2014", type=str, help='raw data dir')
+parser.add_argument('--input_dim', default=300, type=int,help='input demintions')
+parser.add_argument('--hidden_size', default=300, type=int, help='hidden_size')
+parser.add_argument('--batch_size', default=50, type=int, help='batch_size')
+parser.add_argument('--embedding_dim', default=300, type=int, help='embedding_dim')
+parser.add_argument('--num_layers', default=1, type=int, help='num_layers of lstm')
+parser.add_argument('--n_iter', default=100, type=int, help='iter num for train loop')
+opt = parser.parse_args()
+# datasets's dir and get raw data
+raw_data = ConverData(opt.data_dir)
+train, test = ConverData.getData()
+# get embendding data
+em = embedding(train, test)
+train_ids, test_ids, train_y, test_y, train_aps_id, test_aps_id, embedding, word_dict = em.all_data()
+# params
+input_train_x = train_ids
+input_train_y = train_y
+input_dim = opt.input_dim
+input_aspect_train = train_aps_id
+test_aps_id = test_aps_id
+hidden_size = opt.hidden_size
+batch_size = opt.batch_size
+embedding_dim = opt.embedding_dim
+word_embedding = embedding
+num_layers = opt.num_layers
+n_iter = opt.n_iter
+word_dict = word_dict
+is_shuffle = True
+bias = True
+# training
+train(input_train_x, input_train_y,input_dim, input_aspect_train, hidden_size, batch_size, embedding_dim, word_embedding, num_layers, is_shuffle = True,bias=True)
+
+print("*************training End**************")
