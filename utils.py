@@ -14,15 +14,15 @@ import numpy as np
 
 
 # batch prosessing
-def get_batch_data(x_data,y_data, aspect,batch_size,n_iter=100,is_shuffle=True):
+def get_batch_data(x_data,y_data, aspect,batch_size,n_iter=100,is_shuffle=False):
     for index in batch_index(len(y_data), batch_size, n_iter, is_shuffle):
-        x = x_data[index],
-        y = y_data[index],
+        x = x_data[index]
+        y = y_data[index]
         s = aspect[index]
         yield x, y,s
 
 
-def batch_index(length, batch_size, n_iter=100, is_shuffle=True):
+def batch_index(length, batch_size, n_iter=100, is_shuffle=False):
     index = list(range(length))
     for j in range(n_iter):
         if is_shuffle:

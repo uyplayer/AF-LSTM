@@ -7,7 +7,7 @@
 '''
 Implementation model in paper
 '''
-
+from __future__ import print_function
 import os
 import sys
 import argparse
@@ -20,7 +20,7 @@ import word_embedding
 import data_convert
 from numpy.fft import fft, ifft
 
-from __future__ import print_function
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -28,26 +28,27 @@ from utils import get_batch_data
 from word_embedding import embedding
 from data_convert import ConverData
 import torch.optim as optim
+from torch.autograd import Variable
 
 torch.manual_seed(1)
 
 # AF_LSTM
 class AF_LSTM(nn.Module):
 
-    def __int__(self, input_dim, hidden_size, batch_size, embedding_dim, word_embedding, num_layers=1, is_shuffle = True,bias=True):
+    def __init__(self, input_dim, hidden_size, batch_size, embedding_dim, word_embeddings, num_layers=1, is_shuffle = False,bias=True):
         print("Model : AF_LSTM is ready to run")
         super(AF_LSTM, self).__init__()
         self.hidden_size = hidden_size
         self.batch_size = batch_size
         self.embedding_dim = embedding_dim
-        self.word_embedding = word_embedding
+        self.word_embeddings = word_embeddings
         self.num_layers = num_layers
         self.n_iter = n_iter
         self.bias = bias
         self.is_shuffle = is_shuffle
         self.n_iter = n_iter
         self.input_dim = input_dim
-
+        self.vocab_size = self.word_embeddings.shape[0]
         # model
         #  attention trainable params
         self.w_y = nn.Parameter(torch.randn([self.embedding_dim, self.embedding_dim]))
@@ -57,13 +58,17 @@ class AF_LSTM(nn.Module):
         self.w_f = nn.Parameter(torch.randn([self.embedding_dim, self.embedding_dim]))
         self.b_f = nn.Parameter(torch.randn(self.embedding_dim))
         self.tanh = nn.Tanh()
-        self.softmax = nn.Softmax(dim=self.embedding_dim)
+        self.softmax = nn.Softmax()
         self.tanh_r = nn.Tanh()
-        self.last_Softmax = nn.Softmax(dim=self.embedding_dim)
+        self.last_Softmax = nn.Softmax()
+
 
      # LSTM
     def __lstm(self,input):
-        input_embedding = nn.Embedding(self.word_embedding, input)
+        embedding = nn.Embedding(num_embeddings=self.vocab_size, embedding_dim=self.embedding_dim)
+        embedding.weight.data.copy_(torch.from_numpy(self.word_embeddings))
+        embedding.weight.requires_grad = False
+        input_embedding = embedding(Variable(torch.LongTensor(input)))
         self.lstm = nn.LSTM(self.embedding_dim, self.hidden_size, self.num_layers)
         lstm_out, _ = self.lstm(input_embedding)
         return lstm_out
@@ -71,7 +76,10 @@ class AF_LSTM(nn.Module):
     # aspect_normilization
     def __aspnor(self,input):
         self.bn = nn.BatchNorm1d(num_features=self.input_dim)
-        input_embedding = nn.Embedding(self.word_embedding, input)
+        embedding = nn.Embedding(num_embeddings=self.vocab_size, embedding_dim=self.embedding_dim)
+        embedding.weight.data.copy_(torch.from_numpy(self.word_embeddings))
+        embedding.weight.requires_grad = False
+        input_embedding = embedding(Variable(torch.LongTensor(input)))
         output = self.bn(input_embedding)
         normal_aspect = torch.sum(output, 1)
         return normal_aspect
@@ -84,7 +92,7 @@ class AF_LSTM(nn.Module):
 
     # calculate  associative memory ；circular correlation
     def __correlation(self, h, s):
-        return ifft(fft(self.h) * fft(self.s).conj()).real
+        return ifft(fft(h.data.numpy()) * fft(s.data.numpy()).conj()).real
 
     def forward(self,x,s):
         h_lstm_out = self.__lstm(x)
@@ -100,10 +108,12 @@ class AF_LSTM(nn.Module):
         return y
 
 # train
-def train(input_train_x, input_train_y,input_dim, input_aspect, hidden_size, batch_size, embedding_dim, word_embedding, num_layers, is_shuffle = True,bias=True):
+def train(input_train_x, input_train_y,input_dim, input_aspect, hidden_size, batch_size, embedding_dim,
+          word_embeddings, num_layers, is_shuffle = True):
+
     print("Ready to train")
     # AF_LSTM
-    af_lstm = AF_LSTM(input_dim, hidden_size, batch_size, embedding_dim, word_embedding, num_layers, is_shuffle = True,bias=True)
+    af_lstm = AF_LSTM(input_dim, hidden_size, batch_size, embedding_dim, word_embeddings, num_layers, is_shuffle = True,bias=True)
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(af_lstm.parameters(), lr=0.001, momentum=0.9)
@@ -130,21 +140,27 @@ def train(input_train_x, input_train_y,input_dim, input_aspect, hidden_size, bat
 
 print("============================train===========================")
 
+def t(input_train_x, input_train_y,input_dim, input_aspect_train, hidden_size, batch_size, embedding_dim, word_embedding, num_layers, is_shuffle = True):
+    print("ok")
+
+
 # Hyper Parameters
+print("===========Hyper Parameters============")
 parser = argparse.ArgumentParser()
 parser.add_argument('--data_dir', default=os.getcwd() + "/Datasets/raw_data/ABSA-SemEval2014", type=str, help='raw data dir')
 parser.add_argument('--input_dim', default=300, type=int,help='input demintions')
 parser.add_argument('--hidden_size', default=300, type=int, help='hidden_size')
-parser.add_argument('--batch_size', default=50, type=int, help='batch_size')
+parser.add_argument('--batch_size', default=5, type=int, help='batch_size')
 parser.add_argument('--embedding_dim', default=300, type=int, help='embedding_dim')
 parser.add_argument('--num_layers', default=1, type=int, help='num_layers of lstm')
 parser.add_argument('--n_iter', default=100, type=int, help='iter num for train loop')
 opt = parser.parse_args()
 # datasets's dir and get raw data
 raw_data = ConverData(opt.data_dir)
-train, test = ConverData.getData()
+trains, tests = ConverData.getData()
 # get embendding data
-em = embedding(train, test)
+print("*************get embendding data*************")
+em = embedding(trains, tests)
 train_ids, test_ids, train_y, test_y, train_aps_id, test_aps_id, embedding, word_dict = em.all_data()
 # params
 input_train_x = train_ids
@@ -155,13 +171,16 @@ test_aps_id = test_aps_id
 hidden_size = opt.hidden_size
 batch_size = opt.batch_size
 embedding_dim = opt.embedding_dim
-word_embedding = embedding
+word_embeddings = embedding
 num_layers = opt.num_layers
 n_iter = opt.n_iter
 word_dict = word_dict
-is_shuffle = True
+is_shuffle = False
 bias = True
+
 # training
-train(input_train_x, input_train_y,input_dim, input_aspect_train, hidden_size, batch_size, embedding_dim, word_embedding, num_layers, is_shuffle = True,bias=True)
+# t(input_train_x, input_train_y,input_dim, input_aspect_train, hidden_size, batch_size, embedding_dim, word_embedding, num_layers, is_shuffle = True)
+
+train(input_train_x, input_train_y,input_dim, input_aspect_train, hidden_size, batch_size, embedding_dim, word_embeddings, num_layers, is_shuffle = False)
 
 print("*************training End**************")

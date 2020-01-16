@@ -103,7 +103,7 @@ class embedding(object):
                 ids.append(word_dict.get(t, 0))
             test_ids.append(ids + [0] * (self.sentence_len - len(ids)))
         print("*******all data Model needs are ready*******")
-        return np.asarray(train_ids, dtype=np.int32),np.asarray(test_ids, dtype=np.int32),np.asarray(train_y),np.asarray(test_y),np.asarray(train_aps_id, dtype=np.int32),np.asarray(test_aps_id, dtype=np.int32),np.asarray(embedding, dtype=np.int32),word_dict
+        return np.array(train_ids),np.array(test_ids),np.array(train_y),np.array(test_y),np.array(train_aps_id),np.array(test_aps_id),np.array(embedding),word_dict
 
 
 
