@@ -18,7 +18,7 @@ sys.path.append(Dir)
 import numpy as np
 import word_embedding
 import data_convert
-from numpy.fft import fft, ifft
+from scipy.fftpack import fft,ifft
 
 
 import torch
@@ -73,7 +73,7 @@ class AF_LSTM(nn.Module):
         lstm_out, _ = self.lstm(input_embedding)
         return lstm_out
 
-    # aspect_normilization
+    # aspect_normilization and embedding
     def __aspnor(self,input):
         self.bn = nn.BatchNorm1d(num_features=self.input_dim)
         embedding = nn.Embedding(num_embeddings=self.vocab_size, embedding_dim=self.embedding_dim)
@@ -81,10 +81,10 @@ class AF_LSTM(nn.Module):
         embedding.weight.requires_grad = False
         input_embedding = embedding(Variable(torch.LongTensor(input)))
         output = self.bn(input_embedding)
-        normal_aspect = torch.sum(output, 1)
-        return normal_aspect
+        # normal_aspect = torch.sum(output, 1)
+        return output
 
-    # Hidenstate_Normalization
+    # Hidenstate_Normalization and embedding
     def __hidennor(self,input):
         bn = nn.BatchNorm1d(num_features=self.input_dim)
         output = bn(input)
@@ -92,18 +92,39 @@ class AF_LSTM(nn.Module):
 
     # calculate  associative memory ；circular correlation
     def __correlation(self, h, s):
-        return ifft(fft(h.data.numpy()) * fft(s.data.numpy()).conj()).real
+
+        '''
+        import numpy as np
+        from scipy.fftpack  import fft,ifft
+        import matplotlib.pyplot as plt
+        a = np.random.rand(83,300)
+        b = np.random.rand(1,300)
+        A = fft(a)
+        B = fft(b)
+        C = A*B
+        print(C)
+        '''
+        h = h.data.numpy()
+        s = s.data.numpy()
+        all = []
+        for i in range(len(s)):
+            c = fft(h[i]) * fft(s[i])
+            all.append(list(c))
+        return np.array(all)
 
     def forward(self,x,s):
         h_lstm_out = self.__lstm(x)
         s__norm = self.__aspnor(s)
         m = self.__correlation(h_lstm_out, s__norm)
+        print("m:", type(m))
+        m = Variable(torch.LongTensor(torch.from_numpy(m)))
+        print("m:", type(m))
         # # attention
-        Y = self.tanh(torch.matmul(self.w_y, m))
-        a = self.softmax(torch.matmul(self.w_t, Y))
+        Y = self.tanh(torch.mul(self.w_y,m))
+        a = self.softmax(torch.bmm(self.w_t, Y))
         r = torch.matmul(h_lstm_out, a.transpose())
-        r = self.tanh_r(torch.matmul(self.w_p, r) + torch.matmul(self.w_x, h_lstm_out))
-        x_r = torch.matmul(self.w_f, r) + self.b_f
+        r = self.tanh_r(torch.bmm(self.w_p, r) + torch.bmm(self.w_x, h_lstm_out))
+        x_r = torch.bmm(self.w_f, r) + self.b_f
         y = self.last_Softmax(x_r)
         return y
 
@@ -114,7 +135,6 @@ def train(input_train_x, input_train_y,input_dim, input_aspect, hidden_size, bat
     print("Ready to train")
     # AF_LSTM
     af_lstm = AF_LSTM(input_dim, hidden_size, batch_size, embedding_dim, word_embeddings, num_layers, is_shuffle = True,bias=True)
-
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(af_lstm.parameters(), lr=0.001, momentum=0.9)
     running_loss = 0.0
